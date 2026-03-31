@@ -14,10 +14,14 @@ module Uid_set = Shape.Uid.Set
 module Uid_map : Granular_map.S with type key = Shape.Uid.t
 module Union_find : sig
   type t
+  type store = Uid_set.t Union_find.content Uid_map.t
+  val empty : unit -> store
 
-  val make : Uid_set.t -> t
-  val get : t -> Uid_set.t
-  val union : t -> t -> t
+  val new_root : store -> Shape.Uid.t -> Uid_set.t -> store * t
+  val get : store -> t -> Uid_set.t
+  val union : store -> t -> t -> store * t
+
+  val merge : store -> store -> store
 end
 
 type stat = { mtime : float; size : int; source_digest : string option }
@@ -28,6 +32,7 @@ type index =
     cu_shape : (string, Shape.t) Hashtbl.t;
     stats : stat Stats.t;
     root_directory : string option;
+    related_uids_store: Union_find.store;
     related_uids : Union_find.t Uid_map.t
   }
 

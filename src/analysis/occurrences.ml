@@ -224,13 +224,18 @@ let get_external_locs ~(config : Mconfig.t) ~current_buffer_path uid :
 let lookup_related_uids_in_indexes ~(config : Mconfig.t) uid =
   let title = "lookup_related_uids_in_indexes" in
   let open Index_format in
+  let store = ref (Uid_map.empty ()) in
   let related_uids =
     List.fold_left ~init:(Uid_map.empty ()) config.merlin.index_files
       ~f:(fun acc index_file ->
         try
           let index = Index_cache.read index_file in
+          store := Union_find.merge !store index.related_uids_store;
           Uid_map.union
-            (fun _ a b -> Some (Union_find.union a b))
+            (fun _ a b ->
+              let store', v = Union_find.union !store a b in
+              store := store';
+              Some v)
             index.related_uids acc
         with
         | Index_format.Not_an_index _
@@ -242,7 +247,7 @@ let lookup_related_uids_in_indexes ~(config : Mconfig.t) uid =
   in
   Uid_map.find_opt uid related_uids
   |> Option.value_map ~default:[] ~f:(fun x ->
-      x |> Union_find.get |> Uid_set.to_list)
+      x |> Union_find.get !store |> Uid_set.to_list)
 
 let find_linked_uids ~config ~scope ~name uid =
   let title = "find_linked_uids" in

@@ -57,7 +57,7 @@ An error is expected, a pointer references an index file, but it doesn't exist a
 
   $ mv test_sig.ocaml-index index-files
   $ ocaml-index dump project.ocaml-index
-  Missing file "test_sig.ocaml-index".
+  Missing file "$TESTCASE_ROOT/test_sig.ocaml-index".
   Hint: try to rebuild indexes with dune build @ocaml-index.
   [1]
   $ mv index-files test_sig.ocaml-index
@@ -66,6 +66,6 @@ An error is expected, a pointer references an index file that is considered outd
 
   $ ocaml-index aggregate test.cmti test.cmt sig.cmti sig.cmt --root . --rewrite-root -o test_sig.ocaml-index
   $ ocaml-index dump project.ocaml-index
-  Index IDs doesn't match for "test_sig.ocaml-index".
+  Index IDs doesn't match for "$TESTCASE_ROOT/test_sig.ocaml-index".
   Hint: try to rebuild indexes with dune build @ocaml-index.
   [1]

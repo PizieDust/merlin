@@ -32,7 +32,7 @@ type index =
     cu_shape : (string, Shape.t) Hashtbl.t;
     stats : stat Stats.t;
     root_directory : string option;
-    related_uids_store: Union_find.store;
+    related_uids_store : Union_find.store;
     related_uids : Union_find.t Uid_map.t
   }
 

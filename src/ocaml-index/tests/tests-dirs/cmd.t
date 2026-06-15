@@ -1,6 +1,14 @@
   $ ocaml-index aggregate
   $ ocaml-index aggregate --debug
   [debug] Debug log is enabled
+  total_cap 		: 1000000
+  size 		: 0
+  promote_count 	: 0
+  add_count 		: 0
+  discard_count 	: 0
+  add_size 		: 0
+  discard_size 	: 0
+  volume_conservation 	: 0 = 0 + 0 : true
 
   $ ocaml-index --help
   ocaml-index [COMMAND] [-verbose] <file1> [<file2>] ... -o <output>

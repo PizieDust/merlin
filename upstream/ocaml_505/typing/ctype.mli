@@ -238,6 +238,12 @@ val instance_poly_fixed:
         (* Take an instance of a type scheme containing free univars for
            checking that an expression matches this scheme. *)
 
+val maybe_instance_poly: type_expr -> type_expr
+  (* If the type is a [Tpoly], we take an instance (replace
+     the corresponding [Tunivar] by [Tvar]) using
+     [instance_poly ~keep_names:true]; otherwise the
+     input type is returned unchanged. *)
+
 val instance_funct_opt:
         id_in:Ident.t -> p_out:Path.t -> fixed:bool ->
         type_expr -> type_expr option
@@ -356,6 +362,11 @@ val filter_functor:
            Returns a result instead of raising [Unify].
            May return [Some _] when the type is not principally known,
            so you should check for principality. *)
+val filter_arity:
+  Env.t -> type_expr -> arg_label ->
+  (Env.t * type_expr, filter_arrow_failure) result
+(* A specialized case of unification with [ l:_ -> 'a ] for all arrows *)
+
 val is_really_poly : Env.t -> type_expr -> bool
 val filter_method: Env.t -> string -> type_expr -> type_expr
         (* A special case of unification (with {m : 'a; 'b}).  Raises

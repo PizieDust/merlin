@@ -833,6 +833,11 @@ let labels_of_application ~prefix = function
         | Asttypes.Labelled str -> Some ("~" ^ str, ty)
         | Asttypes.Optional str ->
           let ty =
+            let ty =
+              match Btype.tpoly_get_mono_opt ty with
+              | Some ty -> ty
+              | None -> ty
+            in
             match Types.get_desc ty with
             | Types.Tconstr (path, [ ty ], _)
               when Path.same path Predef.path_option -> ty

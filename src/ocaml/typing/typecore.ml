@@ -1306,12 +1306,7 @@ let solve_Ppat_constraint tps loc env sty expected_ty =
   tps.tps_pattern_force <- force :: tps.tps_pattern_force;
   let ty, expected_ty' = instance ty, ty in
   unify_pat_types loc env ty (instance expected_ty);
-  let expected_ty' =
-    match get_desc expected_ty' with
-    | Tpoly (expected_ty', tl) ->
-        instance_poly ~keep_names:true tl expected_ty'
-    | _ -> expected_ty'
-  in
+  let expected_ty' = Ctype.maybe_instance_poly expected_ty' in
   (cty, ty, expected_ty')
 
 let solve_Ppat_variant loc env tag no_arg expected_ty =
@@ -2726,6 +2721,7 @@ let enter_nonsplit_or info =
 let rec check_counter_example_pat
     ~info ~(penv : Pattern_env.t) type_pat_state tp expected_ty k =
   assert (penv.in_counterexample = true);
+  assert (not (is_Tpoly expected_ty));
   let check_rec ?(info=info) ?(penv=penv) =
     check_counter_example_pat ~info ~penv type_pat_state in
   let loc = tp.pat_loc in
@@ -2865,6 +2861,9 @@ let check_counter_example_pat ~counter_example_args penv tp expected_ty =
      way -- one of the functions it calls writes an entry into
      [tps_pattern_forces] -- so we can just ignore module patterns. *)
   let type_pat_state = create_type_pat_state Modules_ignored in
+  let expected_ty =
+    with_level ~level:generic_level (fun () -> maybe_instance_poly expected_ty)
+  in
   wrap_trace_gadt_instances ~force:true !!penv
     (check_counter_example_pat ~info:counter_example_args ~penv
        type_pat_state tp expected_ty)
@@ -2959,6 +2958,9 @@ let rec list_labels_aux env visited ls ty_fun =
     List.rev ls, false
   else match get_desc ty with
     | Tarrow (l, _, ty_res, _) ->
+        list_labels_aux env (TypeSet.add ty visited) (l::ls) ty_res
+    | Tfunctor (l,id,pack,ty_res) ->
+        let env, ty_res = open_tfunctor ~loc:Location.none env id pack ty_res in
         list_labels_aux env (TypeSet.add ty visited) (l::ls) ty_res
     | _ ->
         List.rev ls, is_Tvar ty
@@ -3883,7 +3885,7 @@ let check_partial_application ~statement exp =
   let doit () =
     let ty = get_desc (expand_head exp.exp_env exp.exp_type) in
     match ty with
-    | Tarrow _ ->
+    | Tarrow _ | Tfunctor _  ->
         let rec check {exp_desc; exp_loc; exp_extra; _} =
           if List.exists (function
               | (Texp_constraint _, _, _) -> true
@@ -4131,6 +4133,9 @@ let rec is_inferred sexp =
   | Pexp_coerce _ | Pexp_send _ | Pexp_new _ | Pexp_pack (_, Some _) -> true
   | Pexp_sequence (_, e) -> is_inferred e
   | Pexp_ifthenelse (_, e1, Some e2) -> is_inferred e1 && is_inferred e2
+  | Pexp_struct_item( { pstr_desc= Pstr_open _; _ }, e ) ->
+      (* traverse at least `local open`s, `M.(exp)`, cf #14629 *)
+      is_inferred e
   | _ -> false
 
 (* check if the type of %apply or %revapply matches the type expected by
@@ -4197,6 +4202,99 @@ type type_function_result_param =
 { param : function_param;
   has_poly : bool;
 }
+
+(** lower the level of function arguments to the level of the application *)
+let lower_args outer_level env ty_fun =
+  let lower env ty =
+    try Ctype.unify_var env (newvar2 outer_level) ty
+    with Unify _ -> assert false
+  in
+  let rec lower_args env seen ty_fun =
+    let ty = expand_head env ty_fun in
+    if TypeSet.mem ty seen then () else
+      match get_desc ty with
+        Tarrow (_l, ty_arg, ty_fun, _com) ->
+          lower env ty_arg;
+          lower_args env (TypeSet.add ty seen) ty_fun
+      | Tfunctor (_,id,package,ty_fun) ->
+          List.iter (fun (_,ty) -> lower env ty) package.pack_constraints;
+          let env, ty_fun =
+            open_tfunctor ~loc:Location.none env id package ty_fun
+          in
+          lower_args env (TypeSet.add ty seen) ty_fun
+      | _ -> ()
+  in
+  let ty = instance ty_fun in
+  wrap_trace_gadt_instances env (lower_args env TypeSet.empty) ty
+
+
+let enforce_syntactic_arity ~loc env exp_type result_params body =
+  (* Require that the n-ary function is known to have at least n arrows
+     in the type. This prevents GADT equations introduced by the parameters
+     from hiding arrows from the resulting type.
+
+     Performance hack: Only do this check when any of [params] contains a
+     GADT, as this is the only opportunity for arrows to be hidden from the
+     resulting type.
+  *)
+  (* Assert that [ty] is a function, and return its return type. *)
+  let filter_ty_ret_exn arg_label (env,ty) =
+    match filter_arity env ty arg_label with
+    | Ok (env,ty_ret) -> env, ty_ret
+    | Error error ->
+        let trace =
+          match error with
+          | Unification_error trace -> trace
+          | Not_a_function ->
+              let tarrow =
+                (newty
+                   (Tarrow
+                      (arg_label,
+                       newmono (newvar ()),
+                       newvar (),
+                       commu_ok)));
+              in
+              (* We go to some trouble to try to generate a unification
+                 error to help the error printing code's heuristic to
+                 identify the type equation at fault.
+              *)
+              (try
+                 unify env tarrow ty;
+                 fatal_error "unification unexpectedly succeeded"
+               with Unify trace -> trace)
+          | Label_mismatch _ ->
+              fatal_error
+                "Label_mismatch not expected as this point; this should\
+                 have been caught when the function was typechecked."
+        in
+        let syntactic_arity =
+          List.length result_params +
+          (match body with
+           | Tfunction_body _ -> 0
+           | Tfunction_cases _ -> 1)
+        in
+        let err =
+          Function_arity_type_clash
+            { syntactic_arity;
+              type_constraint = exp_type;
+              trace;
+            }
+        in
+        raise (Error (loc, env, err))
+  in
+  let env_ret_ty =
+    List.fold_left (fun env_ret_ty {param; _ } ->
+        filter_ty_ret_exn param.fp_arg_label env_ret_ty
+      )
+      (env, exp_type)
+      result_params
+  in
+  match body with
+  | Tfunction_body _ -> ()
+  | Tfunction_cases _ ->
+      ignore
+        (filter_ty_ret_exn Nolabel env_ret_ty : Env.t * type_expr)
+
 
 (* Generalize expressions *)
 let may_lower_contravariant env exp =
@@ -4465,76 +4563,10 @@ and type_expect_
         type_function env params body_constraint body ty_expected ~in_function
           ~first:true
       in
-      (* Require that the n-ary function is known to have at least n arrows
-         in the type. This prevents GADT equations introduced by the parameters
-         from hiding arrows from the resulting type.
-
-         Performance hack: Only do this check when any of [params] contains a
-         GADT, as this is the only opportunity for arrows to be hidden from the
-         resulting type.
-      *)
       begin match contains_gadt with
       | No_gadt -> ()
       | Contains_gadt ->
-          (* Assert that [ty] is a function, and return its return type. *)
-          let filter_ty_ret_exn ty arg_label ~param_hole =
-            match
-              filter_arrow env ~in_apply:false ty arg_label ~param_hole
-            with
-            | Ok { ty_ret; _ } -> ty_ret
-            | Error error ->
-                let trace =
-                  match error with
-                  | Unification_error trace -> trace
-                  | Not_a_function ->
-                      let tarrow =
-                        (newty
-                          (Tarrow
-                            (arg_label,
-                             newmono (newvar ()),
-                             newvar (),
-                             commu_ok)));
-                      in
-                      (* We go to some trouble to try to generate a unification
-                        error to help the error printing code's heuristic to
-                        identify the type equation at fault.
-                      *)
-                      (try
-                        unify env tarrow ty;
-                        fatal_error "unification unexpectedly succeeded"
-                      with Unify trace -> trace)
-                  | Label_mismatch _ ->
-                      fatal_error
-                        "Label_mismatch not expected as this point; this should\
-                        have been caught when the function was typechecked."
-                in
-                let syntactic_arity =
-                  List.length result_params +
-                    (match body with
-                      | Tfunction_body _ -> 0
-                      | Tfunction_cases _ -> 1)
-                in
-                let err =
-                  Function_arity_type_clash
-                    { syntactic_arity;
-                      type_constraint = exp_type;
-                      trace;
-                    }
-                in
-                raise (Error (loc, env, err))
-          in
-          let ret_ty =
-            List.fold_left (fun ret_ty { param; has_poly } ->
-                filter_ty_ret_exn ret_ty param.fp_arg_label ~param_hole:has_poly
-              )
-              exp_type
-              result_params
-          in
-          match body with
-          | Tfunction_body _ -> ()
-          | Tfunction_cases _ ->
-              ignore
-                (filter_ty_ret_exn ret_ty Nolabel ~param_hole:false : type_expr)
+          enforce_syntactic_arity ~loc env exp_type result_params body
       end;
       let params =
         List.map (fun { param; has_poly = _ } -> param) result_params
@@ -4551,16 +4583,6 @@ and type_expect_
   | Pexp_apply(sfunct, sargs) ->
       assert (sargs <> []);
       let outer_level = get_current_level () in
-      let rec lower_args seen ty_fun =
-        let ty = expand_head env ty_fun in
-        if TypeSet.mem ty seen then () else
-          match get_desc ty with
-            Tarrow (_l, ty_arg, ty_fun, _com) ->
-              (try Ctype.unify_var env (newvar2 outer_level) ty_arg
-               with Unify _ -> assert false);
-              lower_args (TypeSet.add ty seen) ty_fun
-          | _ -> ()
-      in
       (* one more level for warning on non-returning functions *)
       with_local_level_generalize begin fun () ->
       let type_sfunct sfunct =
@@ -4568,8 +4590,7 @@ and type_expect_
           with_local_level_generalize_structure_if_principal
             (fun () -> type_exp env sfunct)
         in
-        let ty = instance funct.exp_type in
-        wrap_trace_gadt_instances env (lower_args TypeSet.empty) ty;
+        lower_args outer_level env funct.exp_type;
         funct
       in
       let funct, sargs =
@@ -5457,7 +5478,9 @@ and type_expect_
       try
       let (_, si, exp) =
         with_local_level_generalize begin fun () ->
-          let (si, newenv) = !type_str_item env si in
+          let (si, newenv) =
+            Typetexp.TyVarEnv.with_local_scope @@ fun () ->
+            !type_str_item env si in
           let exp = type_expect newenv e ty_expected_explained in
           (newenv, si, exp)
         end ~before_generalize: begin fun (newenv, _si, exp) ->
@@ -7764,7 +7787,7 @@ let report_literal_type_constraint const = function
 let report_partial_application = function
   | Some tr -> begin
       match get_desc tr.Errortrace.got.Errortrace.expanded with
-      | Tarrow _ ->
+      | Tarrow _ | Tfunctor _ ->
           [ Location.msg
               "@[@{<hint>Hint@}:@ This function application is partial,@ \
                maybe@ some@ arguments@ are missing.@]" ]
@@ -7970,7 +7993,7 @@ let report_error ~loc env = function
       funct; func_ty; res_ty; previous_arg_loc; extra_arg_loc
     } ->
       begin match get_desc func_ty with
-        Tarrow _ ->
+        Tarrow _ | Tfunctor _ ->
           let returns_unit = match get_desc res_ty with
             | Tconstr (p, _, _) -> Path.same p Predef.path_unit
             | _ -> false

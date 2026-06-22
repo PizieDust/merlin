@@ -2,6 +2,7 @@ unreleased
 ==========
 
   + merlin library
+    - Support for OCaml 5.5 (#2077, fixes #2024)
     - Fix signature-help with type aliases (#2067, fixes #1927)
     - Fix locate on punned let bindings, to use the common identifier as the
       expression (instead of the pattern) (#2066)

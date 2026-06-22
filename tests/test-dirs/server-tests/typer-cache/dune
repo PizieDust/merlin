@@ -1,6 +1,11 @@
-(cram 
+(cram
  (applies_to stamps)
- (enabled_if 
-  (and 
+ (enabled_if
+  (and
    (<> %{ocaml_version} 4.12.0+multicore)
    (<> %{ocaml_version} 4.12.0+domains))))
+
+(cram
+ (applies_to cmi-appears)
+ (enabled_if
+  (<> %{system} freebsd)))

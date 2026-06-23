@@ -1,5 +1,6 @@
-unreleased
+merlin 5.8
 ==========
+Tue Jun 23 12:15:42 CEST 2026
 
   + merlin library
     - Support for OCaml 5.5 (#2077, fixes #2024)

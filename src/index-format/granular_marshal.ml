@@ -239,8 +239,11 @@ let rec disk_to_memory_iter store parent_link =
             | None ->
               invalid_arg "Granular_marshal.read_loc: reuse of a different type"
             )
-          | Some _ ->
-            invalid_arg "Granular_marshal.read_loc: reuse of a different type"
+          | Some (Link (lnk', None)) ->
+            let lnk' = Obj.magic lnk' in
+            upgrade_reused_link_schema lnk' store schema;
+            Cache.replace store.cache loc (Link (lnk', Some type_id));
+            lnk := Duplicate (normalize lnk')
           | None ->
             lnk := On_disk { store; loc; schema = Some schema };
             Cache.add store.cache loc (Link (lnk, Some type_id)))
@@ -257,30 +260,7 @@ let rec disk_to_memory_iter store parent_link =
             )
           | Some (Link (lnk', None)) ->
             let lnk' = Obj.magic lnk' in
-            let () =
-              (* We might have reused a parent whose schema was initially unknown.
-                   Let's update it. *)
-              match !lnk' with
-              | On_disk { store; loc; schema = None; _ } ->
-                (* This case only happens if the previous read was an
-                    [On_disc_ptr { pos = Some_; _}] with a parent of unknown
-                    schema. *)
-                lnk' := On_disk { store; loc; schema = Some schema }
-              | In_cache (v, Dirty_unknown_schema, cell, smalls) ->
-                (* If we already have the value in cache we must clean it. *)
-                schema (disk_to_memory_iter store (PLink lnk')) v;
-                lnk' := In_cache (v, Clean, cell, smalls)
-              | Small _
-              | Serialized _
-              | Serialized_reused _
-              | Serialized_small _
-              | On_disk _
-              | On_disk_small _
-              | On_disk_ptr _
-              | In_memory _
-              | In_cache (_, _, _, _)
-              | In_memory_reused _ | Duplicate _ -> assert false
-            in
+            upgrade_reused_link_schema lnk' store schema;
             Cache.replace store.cache loc (Link (lnk', Some type_id));
             lnk := Duplicate (normalize lnk')
           | _ -> lnk := On_disk { store; loc; schema = Some schema })
@@ -309,6 +289,31 @@ let rec disk_to_memory_iter store parent_link =
         | On_disk _
         | Duplicate _ -> (* These are already "clean" *) ())
   }
+
+(* Sometimes we reuse a parent whose schema was unknown so far.
+   This function updates this parent's schema. *)
+and upgrade_reused_link_schema : type a. a link -> store -> a schema -> unit =
+ fun lnk store schema ->
+  match !lnk with
+  | On_disk { store; loc; schema = None; _ } ->
+    (* This case only happens if the previous read was an
+                    [On_disc_ptr { pos = Some_; _}] with a parent of unknown
+                    schema. *)
+    lnk := On_disk { store; loc; schema = Some schema }
+  | In_cache (v, Dirty_unknown_schema, cell, smalls) ->
+    (* If we already have the value in cache we must clean it. *)
+    schema (disk_to_memory_iter store (PLink lnk)) v;
+    lnk := In_cache (v, Clean, cell, smalls)
+  | Small _
+  | Serialized _
+  | Serialized_reused _
+  | Serialized_small _
+  | On_disk _
+  | On_disk_small _
+  | On_disk_ptr _
+  | In_memory _
+  | In_cache (_, _, _, _)
+  | In_memory_reused _ | Duplicate _ -> assert false
 
 let add_to_cache v lnk ~loc store ~size small_values schema =
   let discarded = Dbllist.discard_size (get_lru ()) size in

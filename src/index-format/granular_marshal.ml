@@ -66,9 +66,7 @@ and 'a repr =
   | On_disk of { store : store; loc : int; schema : 'a schema }
       (** {i in-memory} A value that can be read from the disk. *)
   | On_disk_small of
-      { store : store;
-        loc : int;
-        parent : parent_link; (* Either the parent or an On_disk_ptr *)
+      { parent : parent_link; (* Either the parent or an On_disk_ptr *)
         small_type_id : 'a link Type.Id.t;
         small_pos : int;
         small_schema : 'a schema
@@ -198,7 +196,7 @@ let resolve_filename store ~filename =
 
 (** This iterator translates links from the Disk Realm to the Memory Realm.
     This is the process we refer too as "cleaning a value". *)
-let rec disk_to_memory_iter store loc parent_link =
+let rec disk_to_memory_iter store parent_link =
   { yield =
       (fun (type a)
         (lnk : a link)
@@ -209,9 +207,7 @@ let rec disk_to_memory_iter store loc parent_link =
         | Small pos ->
           lnk :=
             On_disk_small
-              { store;
-                loc;
-                parent = parent_link;
+              { parent = parent_link;
                 small_pos = pos;
                 small_type_id = type_id;
                 small_schema = schema
@@ -235,9 +231,7 @@ let rec disk_to_memory_iter store loc parent_link =
           in
           lnk :=
             On_disk_small
-              { store;
-                loc;
-                parent;
+              { parent;
                 small_type_id = type_id;
                 small_schema = schema;
                 small_pos = pos
@@ -281,7 +275,7 @@ let rec disk_to_memory_iter store loc parent_link =
                 lnk' := On_disk { store; loc; schema }
               | In_cache (v, Dirty_unknown_schema, cell, smalls) ->
                 (* If we already have the value in cache we must clean it. *)
-                schema (disk_to_memory_iter store loc (PLink lnk')) v;
+                schema (disk_to_memory_iter store (PLink lnk')) v;
                 lnk' := In_cache (v, Clean, cell, smalls)
               | Small _
               | Serialized _
@@ -310,9 +304,7 @@ let rec disk_to_memory_iter store loc parent_link =
           in
           lnk :=
             On_disk_small
-              { store;
-                loc;
-                parent;
+              { parent;
                 small_type_id = type_id;
                 small_schema = schema;
                 small_pos
@@ -354,7 +346,7 @@ let read_loc_dirty fd loc =
     cleaned yet because their schema is unknown at that point.  *)
 let read_loc store fd loc schema parent_link =
   let v, size_read, small_children = read_loc_dirty fd loc in
-  let iter = disk_to_memory_iter store loc parent_link in
+  let iter = disk_to_memory_iter store parent_link in
   schema iter v;
   (v, size_read, small_children)
 
@@ -372,15 +364,23 @@ let fetch_on_disk_dirty lnk store loc =
   add_to_cache v lnk ~loc store ~size small_children None;
   small_children
 
+(* Smalls are stored along their parents so they share the same loc *)
+let store_and_loc_of_parent (PLink lnk : parent_link) =
+  match !lnk with
+  | On_disk_ptr { filename; id; loc; pos = None; _ } ->
+    ({ filename; id; cache = Cache_cache.read filename }, loc)
+  | In_cache (_, _, { content = Cached (_, loc, store, _); _ }, _)
+  | On_disk { store; loc; _ } -> (store, loc)
+  | _ -> assert false
+
 (** Fetch the parent of a small value in order to read its smalls. If the parent
   has not yet been loaded in memory it will be read from the disk and kept dirty
   because its schema is unknown.*)
-let fetch_parent : parent_link -> any_value array =
- fun (PLink parent_link) ->
+let fetch_parent : parent_link -> store -> any_value array =
+ fun (PLink parent_link) store ->
   match !parent_link with
   | In_cache (_, _, _, smalls) -> smalls
-  | On_disk_ptr { filename; loc; id; pos = None } ->
-    let store = { filename; id; cache = Cache_cache.read filename } in
+  | On_disk_ptr { loc; pos = None; _ } ->
     fetch_on_disk_dirty parent_link store loc
   | On_disk { store; loc; schema } ->
     snd (fetch_on_disk parent_link store loc schema)
@@ -399,9 +399,9 @@ let rec fetch : type a. a link -> a =
     invalid_arg "Granular_marshal.fetch: accessing dirty cached value"
   | Duplicate original_lnk -> fetch original_lnk
   | On_disk { store; loc; schema } -> fst (fetch_on_disk lnk store loc schema)
-  | On_disk_small { store; loc; parent; small_pos; small_type_id; small_schema }
-    -> (
-    let smalls = fetch_parent parent in
+  | On_disk_small { parent; small_pos; small_type_id; small_schema } -> (
+    let store, _loc = store_and_loc_of_parent parent in
+    let smalls = fetch_parent parent store in
     match smalls.(small_pos) with
     | Value (type b) ((v, type_id') : b * _) -> (
       match Type.Id.provably_equal small_type_id type_id' with
@@ -409,7 +409,7 @@ let rec fetch : type a. a link -> a =
       | Some (Equal : (a link, b link) Type.eq) -> v)
     | Unknown v ->
       let v = Obj.magic v in
-      small_schema (disk_to_memory_iter store loc parent) v;
+      small_schema (disk_to_memory_iter store parent) v;
       smalls.(small_pos) <- Value (v, small_type_id);
       v)
   | In_memory v | In_memory_reused v -> v
@@ -504,7 +504,8 @@ let write ?(flags = []) fd ~filename ~id root_schema root_value =
                somewhere in the file. *)
             let filename = relativize filename in
             lnk := On_disk_ptr { filename; id; loc; pos = None }
-          | On_disk_small { store = { filename; id; _ }; loc; small_pos; _ } ->
+          | On_disk_small { parent; small_pos; _ } ->
+            let { filename; id; _ }, loc = store_and_loc_of_parent parent in
             let filename = relativize filename in
             lnk := On_disk_ptr { filename; id; loc; pos = Some small_pos })
     }

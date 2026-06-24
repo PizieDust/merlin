@@ -376,7 +376,7 @@ let store_and_loc_of_parent (PLink lnk : parent_link) =
 (** Fetch the parent of a small value in order to read its smalls. If the parent
   has not yet been loaded in memory it will be read from the disk and kept dirty
   because its schema is unknown.*)
-let fetch_parent : parent_link -> store -> any_value array =
+let fetch_parent_smalls : parent_link -> store -> any_value array =
  fun (PLink parent_link) store ->
   match !parent_link with
   | In_cache (_, _, cell, smalls) ->
@@ -403,7 +403,7 @@ let rec fetch : type a. a link -> a =
   | On_disk { store; loc; schema } -> fst (fetch_on_disk lnk store loc schema)
   | On_disk_small { parent; small_pos; small_type_id; small_schema } -> (
     let store, _loc = store_and_loc_of_parent parent in
-    let smalls = fetch_parent parent store in
+    let smalls = fetch_parent_smalls parent store in
     match smalls.(small_pos) with
     | Value (type b) ((v, type_id') : b * _) -> (
       match Type.Id.provably_equal small_type_id type_id' with

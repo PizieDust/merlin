@@ -63,7 +63,7 @@ and 'a repr =
   (*
    * In-memory realm
    *)
-  | On_disk of { store : store; loc : int; schema : 'a schema }
+  | On_disk of { store : store; loc : int; schema : 'a schema option }
       (** {i in-memory} A value that can be read from the disk. *)
   | On_disk_small of
       { parent : parent_link; (* Either the parent or an On_disk_ptr *)
@@ -217,15 +217,7 @@ let rec disk_to_memory_iter store parent_link =
             match Cache.find_opt store.cache loc with
             | Some (Link (lnk, _)) -> PLink (normalize lnk)
             | None ->
-              let lnk =
-                ref
-                  (On_disk_ptr
-                     { filename = store.filename;
-                       loc;
-                       id = store.id;
-                       pos = None
-                     })
-              in
+              let lnk = ref (On_disk { store; loc; schema = None }) in
               Cache.add store.cache loc (Link (lnk, None));
               PLink lnk
           in
@@ -236,7 +228,8 @@ let rec disk_to_memory_iter store parent_link =
                 small_schema = schema;
                 small_pos = pos
               }
-        | Serialized { loc } -> lnk := On_disk { store; loc; schema }
+        | Serialized { loc } ->
+          lnk := On_disk { store; loc; schema = Some schema }
         | Serialized_reused { loc } -> (
           match Cache.find_opt store.cache loc with
           | Some (Link (type b) ((lnk', Some type_id') : b link * _)) -> (
@@ -249,7 +242,7 @@ let rec disk_to_memory_iter store parent_link =
           | Some _ ->
             invalid_arg "Granular_marshal.read_loc: reuse of a different type"
           | None ->
-            lnk := On_disk { store; loc; schema };
+            lnk := On_disk { store; loc; schema = Some schema };
             Cache.add store.cache loc (Link (lnk, Some type_id)))
         | On_disk_ptr { filename; loc; id; pos = None } -> (
           let filename = resolve_filename store ~filename in
@@ -268,11 +261,11 @@ let rec disk_to_memory_iter store parent_link =
               (* We might have reused a parent whose schema was initially unknown.
                    Let's update it. *)
               match !lnk' with
-              | On_disk_ptr { loc; pos = None; _ } ->
+              | On_disk { store; loc; schema = None; _ } ->
                 (* This case only happens if the previous read was an
                     [On_disc_ptr { pos = Some_; _}] with a parent of unknown
                     schema. *)
-                lnk' := On_disk { store; loc; schema }
+                lnk' := On_disk { store; loc; schema = Some schema }
               | In_cache (v, Dirty_unknown_schema, cell, smalls) ->
                 (* If we already have the value in cache we must clean it. *)
                 schema (disk_to_memory_iter store (PLink lnk')) v;
@@ -290,7 +283,7 @@ let rec disk_to_memory_iter store parent_link =
             in
             Cache.replace store.cache loc (Link (lnk', Some type_id));
             lnk := Duplicate (normalize lnk')
-          | _ -> lnk := On_disk { store; loc; schema })
+          | _ -> lnk := On_disk { store; loc; schema = Some schema })
         | On_disk_ptr { filename; loc; id; pos = Some small_pos } ->
           let filename = resolve_filename store ~filename in
           let store = { filename; id; cache = Cache_cache.read filename } in
@@ -298,7 +291,7 @@ let rec disk_to_memory_iter store parent_link =
             match Cache.find_opt store.cache loc with
             | Some (Link (lnk, _)) -> PLink (normalize lnk)
             | None ->
-              let lnk = ref (On_disk_ptr { filename; loc; id; pos = None }) in
+              let lnk = ref (On_disk { store; loc; schema = None }) in
               Cache.add store.cache loc (Link (lnk, None));
               PLink lnk
           in
@@ -317,21 +310,17 @@ let rec disk_to_memory_iter store parent_link =
         | Duplicate _ -> (* These are already "clean" *) ())
   }
 
-let on_cache_discard (Cached (link, loc, store, schema)) =
-  (* This also free the smalls that are stored in the link *)
-  match !schema with
-  | Some schema -> link := On_disk { store; loc; schema }
-  | None ->
-    link :=
-      On_disk_ptr { filename = store.filename; id = store.id; loc; pos = None }
-
 let add_to_cache v lnk ~loc store ~size small_values schema =
   let discarded = Dbllist.discard_size (get_lru ()) size in
   let status = if Option.is_none schema then Dirty_unknown_schema else Clean in
   let cell =
     Dbllist.add_front (get_lru ()) (Cached (lnk, loc, store, ref schema), size)
   in
-  List.iter on_cache_discard discarded;
+  List.iter
+    (fun (Cached (link, loc, store, schema)) ->
+      (* This also free the smalls that are stored in the link *)
+      link := On_disk { store; loc; schema = !schema })
+    discarded;
   lnk := In_cache (v, status, cell, small_values)
 
 (** Read one value and its smalls from the disk.  *)
@@ -367,25 +356,27 @@ let fetch_on_disk_dirty lnk store loc =
 (* Smalls are stored along their parents so they share the same loc *)
 let store_and_loc_of_parent (PLink lnk : parent_link) =
   match !lnk with
-  | On_disk_ptr { filename; id; loc; pos = None; _ } ->
-    ({ filename; id; cache = Cache_cache.read filename }, loc)
   | In_cache (_, _, { content = Cached (_, loc, store, _); _ }, _)
   | On_disk { store; loc; _ } -> (store, loc)
-  | _ -> assert false
+  | _ ->
+    invalid_arg
+      ("Granular_marshal.fetch_parent: Unexpected parent link "
+     ^ string_of_link lnk)
 
 (** Fetch the parent of a small value in order to read its smalls. If the parent
   has not yet been loaded in memory it will be read from the disk and kept dirty
   because its schema is unknown.*)
-let fetch_parent_smalls : parent_link -> store -> any_value array =
- fun (PLink parent_link) store ->
+let fetch_parent_smalls : parent_link -> any_value array * store =
+ fun (PLink parent_link) ->
   match !parent_link with
   | In_cache (_, _, cell, smalls) ->
+    let { content = Cached (_, _, store, _); _ } = cell in
     Dbllist.promote (get_lru ()) cell;
-    smalls
-  | On_disk_ptr { loc; pos = None; _ } ->
-    fetch_on_disk_dirty parent_link store loc
-  | On_disk { store; loc; schema } ->
-    snd (fetch_on_disk parent_link store loc schema)
+    (smalls, store)
+  | On_disk { store; loc; schema = None } ->
+    (fetch_on_disk_dirty parent_link store loc, store)
+  | On_disk { store; loc; schema = Some schema } ->
+    (snd (fetch_on_disk parent_link store loc schema), store)
   | _ ->
     invalid_arg
       ("Granular_marshal.fetch_parent: Unexpected parent link "
@@ -400,10 +391,10 @@ let rec fetch : type a. a link -> a =
   | In_cache (_v, Dirty_unknown_schema, _, _) ->
     invalid_arg "Granular_marshal.fetch: accessing dirty cached value"
   | Duplicate original_lnk -> fetch original_lnk
-  | On_disk { store; loc; schema } -> fst (fetch_on_disk lnk store loc schema)
+  | On_disk { store; loc; schema = Some schema } ->
+    fst (fetch_on_disk lnk store loc schema)
   | On_disk_small { parent; small_pos; small_type_id; small_schema } -> (
-    let store, _loc = store_and_loc_of_parent parent in
-    let smalls = fetch_parent_smalls parent store in
+    let smalls, store = fetch_parent_smalls parent in
     match smalls.(small_pos) with
     | Value (type b) ((v, type_id') : b * _) -> (
       match Type.Id.provably_equal small_type_id type_id' with
@@ -419,7 +410,8 @@ let rec fetch : type a. a link -> a =
   | Serialized_reused _
   | Serialized_small _
   | Small _
-  | On_disk_ptr _ ->
+  | On_disk_ptr _
+  | On_disk { schema = None; _ } ->
     invalid_arg
       ("Granular_marshal.fetch: accesssing dirty link " ^ string_of_link lnk)
 
@@ -578,7 +570,7 @@ let read filename fd root_schema =
   let store = { filename; id; cache = Cache_cache.read filename } in
   let root_loc = int_of_binstring (really_input_string fd 8) in
   let parent_link =
-    ref (On_disk { loc = root_loc; store; schema = root_schema })
+    ref (On_disk { loc = root_loc; store; schema = Some root_schema })
   in
   let root_value, _, _ =
     read_loc store fd root_loc root_schema (PLink parent_link)

@@ -379,7 +379,9 @@ let store_and_loc_of_parent (PLink lnk : parent_link) =
 let fetch_parent : parent_link -> store -> any_value array =
  fun (PLink parent_link) store ->
   match !parent_link with
-  | In_cache (_, _, _, smalls) -> smalls
+  | In_cache (_, _, cell, smalls) ->
+    Dbllist.promote (get_lru ()) cell;
+    smalls
   | On_disk_ptr { loc; pos = None; _ } ->
     fetch_on_disk_dirty parent_link store loc
   | On_disk { store; loc; schema } ->

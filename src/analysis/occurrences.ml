@@ -224,30 +224,26 @@ let get_external_locs ~(config : Mconfig.t) ~current_buffer_path uid :
 let lookup_related_uids_in_indexes ~(config : Mconfig.t) uid =
   let title = "lookup_related_uids_in_indexes" in
   let open Index_format in
-  let store = ref (Uid_map.empty ()) in
-  let related_uids =
-    List.fold_left ~init:(Uid_map.empty ()) config.merlin.index_files
-      ~f:(fun acc index_file ->
+  let store, related_uids =
+    List.fold_left
+      ~init:(Uid_map.empty (), Uid_map.empty ())
+      config.merlin.index_files
+      ~f:(fun (store, acc) index_file ->
         try
           let index = Index_cache.read index_file in
-          store := Union_find.merge !store index.related_uids_store;
-          Uid_map.union
-            (fun _ a b ->
-              let store', v = Union_find.union !store a b in
-              store := store';
-              Some v)
-            index.related_uids acc
+          Union_find.merge_union store index.related_uids
+            index.related_uids_store acc
         with
         | Index_format.Not_an_index _
         | Sys_error _
         | Granular_marshal.Outdated_store _
         ->
           log ~title "Could not load index %s" index_file;
-          acc)
+          (store, acc))
   in
   Uid_map.find_opt uid related_uids
   |> Option.value_map ~default:[] ~f:(fun x ->
-      x |> Union_find.get !store |> Uid_set.to_list)
+      x |> Union_find.get store |> Uid_set.to_list)
 
 let find_linked_uids ~config ~scope ~name uid =
   let title = "find_linked_uids" in

@@ -22,6 +22,12 @@ module Union_find : sig
   val union : store -> t -> t -> store * t
 
   val merge : store -> store -> store
+
+  (** [merge_union store map store' map'] combines two union-find structures,
+      each described by a [store] (mapping uids to their union-find content) and
+      a [map] (mapping uids to handles into that store). *)
+  val merge_union :
+    store -> t Uid_map.t -> store -> t Uid_map.t -> store * t Uid_map.t
 end
 
 type stat = { mtime : float; size : int; source_digest : string option }

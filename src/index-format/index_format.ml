@@ -27,6 +27,18 @@ module Union_find = struct
 
   let merge = Union_find.merge ~f:Uid_set.union
 
+  let merge_union store map store' map' =
+    let store = ref (merge store store') in
+    let map =
+      Uid_map.union
+        (fun _ a b ->
+          let store', v = union !store a b in
+          store := store';
+          Some v)
+        map map'
+    in
+    (!store, map)
+
   let type_id : t Type.Id.t = Type.Id.make ()
 
   let schema { Granular_marshal.yield } t =

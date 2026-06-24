@@ -165,26 +165,13 @@ let merge_index ~store_shapes ~into index =
   let defs = merge index.defs into.defs in
   let approximated = merge index.approximated into.approximated in
   let stats = Stats.union (fun _ f1 _f2 -> Some f1) into.stats index.stats in
-  let store =
-    ref (Union_find.merge index.related_uids_store into.related_uids_store)
-  in
-  let related_uids =
-    Uid_map.union
-      (fun _ a b ->
-        let store', v = Union_find.union !store a b in
-        store := store';
-        Some v)
-      index.related_uids into.related_uids
+  let related_uids_store, related_uids =
+    Union_find.merge_union index.related_uids_store index.related_uids
+      into.related_uids_store into.related_uids
   in
   if store_shapes then
     Hashtbl.add_seq index.cu_shape (Hashtbl.to_seq into.cu_shape);
-  { into with
-    defs;
-    approximated;
-    stats;
-    related_uids_store = !store;
-    related_uids
-  }
+  { into with defs; approximated; stats; related_uids_store; related_uids }
 
 let from_files ~store_shapes ~output_file ~root ~rewrite_root ~build_path
     ~do_not_use_cmt_loadpath files =

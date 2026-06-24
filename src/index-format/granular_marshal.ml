@@ -228,9 +228,7 @@ let rec disk_to_memory_iter store parent_link =
                 small_schema = schema;
                 small_pos = pos
               }
-        | Serialized { loc } ->
-          lnk := On_disk { store; loc; schema = Some schema }
-        | Serialized_reused { loc } -> (
+        | Serialized { loc } | Serialized_reused { loc } -> (
           match Cache.find_opt store.cache loc with
           | Some (Link (type b) ((lnk', Some type_id') : b link * _)) -> (
             match Type.Id.provably_equal type_id type_id' with

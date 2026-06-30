@@ -14,7 +14,7 @@ let root = ref ""
 let rewrite_root = ref false
 let store_shapes = ref false
 let do_not_use_cmt_loadpath = ref false
-let cache_size = ref 1_000_000
+let cache_size_kb = ref 1_000_000
 
 type command = Aggregate | Dump | Stats
 
@@ -69,8 +69,9 @@ let speclist =
       "Do not initialize the load path with the paths found in the first input \
        cmt file" );
     ( "--cache-size",
-      Arg.Set_int cache_size,
-      "Set LRU cache size. Will bound memory usage in read-heavy scenarios." )
+      Arg.Set_int cache_size_kb,
+      "Set LRU cache size in kb. Will bound memory usage in read-heavy \
+       scenarios." )
   ]
 
 let set_log_level debug verbose =
@@ -81,7 +82,7 @@ let set_log_level debug verbose =
 let () =
   Arg.parse speclist anon_fun usage_msg;
   set_log_level !debug !verbose;
-  Granular_marshal.set_lru_size !cache_size;
+  Granular_marshal.set_lru_size (!cache_size_kb * 1000);
   try
     (match !command with
     | Some Aggregate ->

@@ -236,42 +236,12 @@ let rec disk_to_memory_iter store parent_link =
                 small_schema = schema;
                 small_pos = pos
               }
-        | Serialized { loc } | Serialized_reused { loc } -> (
-          match Cache.find_opt store.cache loc with
-          | Some (Link (type b) ((lnk', Some type_id') : b link * _)) -> (
-            match Type.Id.provably_equal type_id type_id' with
-            | Some (Equal : (a link, b link) Type.eq) ->
-              lnk := Duplicate (normalize lnk')
-            | None ->
-              invalid_arg "Granular_marshal.read_loc: reuse of a different type"
-            )
-          | Some (Link (lnk', None)) ->
-            let lnk' = Obj.magic lnk' in
-            upgrade_reused_link_schema lnk' store schema;
-            Cache.replace store.cache loc (Link (lnk', Some type_id));
-            lnk := Duplicate (normalize lnk')
-          | None ->
-            lnk := On_disk { store; loc; schema = Some schema };
-            Cache.add store.cache loc (Link (lnk, Some type_id)))
-        | On_disk_ptr { filename; loc; id; pos = None } -> (
+        | Serialized { loc } | Serialized_reused { loc } ->
+          maybe_reuse_or_upgrade lnk store loc type_id schema
+        | On_disk_ptr { filename; loc; id; pos = None } ->
           let filename = resolve_filename store ~filename in
           let store = { filename; id; cache = Cache_cache.read filename } in
-          match Cache.find_opt store.cache loc with
-          | Some (Link (type b) ((lnk', Some type_id') : b link * _)) -> (
-            match Type.Id.provably_equal type_id type_id' with
-            | Some (Equal : (a link, b link) Type.eq) ->
-              lnk := Duplicate (normalize lnk')
-            | None ->
-              invalid_arg "Granular_marshal.read_loc: reuse of a different type"
-            )
-          | Some (Link (lnk', None)) ->
-            let lnk' = Obj.magic lnk' in
-            upgrade_reused_link_schema lnk' store schema;
-            Cache.replace store.cache loc (Link (lnk', Some type_id));
-            lnk := Duplicate (normalize lnk')
-          | None ->
-            lnk := On_disk { store; loc; schema = Some schema };
-            Cache.add store.cache loc (Link (lnk, Some type_id)))
+          maybe_reuse_or_upgrade lnk store loc type_id schema
         | On_disk_ptr { filename; loc; id; pos = Some small_pos } ->
           let filename = resolve_filename store ~filename in
           let store = { filename; id; cache = Cache_cache.read filename } in
@@ -297,6 +267,27 @@ let rec disk_to_memory_iter store parent_link =
         | On_disk _
         | Duplicate _ -> (* These are already "clean" *) ())
   }
+
+(* Checks if a loc has already been read, clean it if it was read without
+   schema, or store it in the cache if it was never read.*)
+and maybe_reuse_or_upgrade : type a.
+    a link -> store -> int -> a link Type.Id.t -> a schema -> unit =
+ fun lnk store loc type_id schema ->
+  match Cache.find_opt store.cache loc with
+  | Some (Link (type b) ((lnk', Some type_id') : b link * _)) -> (
+    match Type.Id.provably_equal type_id type_id' with
+    | Some (Equal : (a link, b link) Type.eq) ->
+      lnk := Duplicate (normalize lnk')
+    | None -> invalid_arg "Granular_marshal.read_loc: reuse of a different type"
+    )
+  | Some (Link (lnk', None)) ->
+    let lnk' = Obj.magic lnk' in
+    upgrade_reused_link_schema lnk' store schema;
+    Cache.replace store.cache loc (Link (lnk', Some type_id));
+    lnk := Duplicate (normalize lnk')
+  | None ->
+    lnk := On_disk { store; loc; schema = Some schema };
+    Cache.add store.cache loc (Link (lnk, Some type_id))
 
 (* Sometimes we reuse a parent whose schema was unknown so far.
    This function updates this parent's schema. *)

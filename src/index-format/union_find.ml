@@ -14,14 +14,15 @@ let new_root store uid value =
 
 let rec find_and_compress store uid =
   match Uid_map.find uid store with
-  | Root _ -> (store, uid)
+  | Root _ as root -> (store, uid, root)
   | Link parent ->
-    let store, root = find_and_compress store parent in
+    let store, root_uid, root = find_and_compress store parent in
     let store =
       (* Path compression: point [uid] to the root. *)
-      if Uid.equal parent root then store else Uid_map.add uid (Link root) store
+      if Uid.equal parent root_uid then store
+      else Uid_map.add uid (Link root_uid) store
     in
-    (store, root)
+    (store, root_uid, root)
 
 let rec find store uid =
   match Uid_map.find uid store with
@@ -35,11 +36,11 @@ let get store uid =
   | Link _ -> assert false
 
 let union ~f store x y =
-  let store, x = find_and_compress store x in
-  let store, y = find_and_compress store y in
+  let store, x, x_root = find_and_compress store x in
+  let store, y, y_root = find_and_compress store y in
   if Uid.equal x y then (store, x)
   else
-    match (Uid_map.find x store, Uid_map.find y store) with
+    match (x_root, y_root) with
     | ( Root { value = value_x; rank = rank_x },
         Root { value = value_y; rank = rank_y } ) ->
       let value = f value_x value_y in

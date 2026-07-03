@@ -49,9 +49,6 @@ and 'a repr =
    *)
   | Serialized of { loc : int }
       (** {i on-disk} A pointer to a serialized value in the file. *)
-  | Serialized_reused of { loc : int }
-      (** {i on-disk} A pointer to serialized value that is used multiple times.
-          Allow for better file compression and perofrmance. *)
   | Small of int
       (** {i on-disk} A "small value" placeholder. Contains the index of this
           small's actual value in the array stored by its parent value. *)
@@ -100,7 +97,6 @@ let string_of_link : type a. a link -> string =
   match !link with
   | Small _ -> Printf.sprintf "Small"
   | Serialized { loc } -> Printf.sprintf "Serialized(loc=%d)" loc
-  | Serialized_reused { loc } -> Printf.sprintf "Serialized_reused(loc=%d)" loc
   | On_disk { loc; _ } -> Printf.sprintf "On_disk(loc=%d)" loc
   | On_disk_small { small_pos; _ } ->
     Printf.sprintf "On_disk_small(small_pos=%d)" small_pos
@@ -236,7 +232,7 @@ let rec disk_to_memory_iter store parent_link =
                 small_schema = schema;
                 small_pos = pos
               }
-        | Serialized { loc } | Serialized_reused { loc } ->
+        | Serialized { loc } ->
           maybe_reuse_or_upgrade lnk store loc type_id schema
         | On_disk_ptr { filename; loc; id; pos = None } ->
           let filename = resolve_filename store ~filename in
@@ -305,7 +301,6 @@ and upgrade_reused_link_schema : type a. a link -> store -> a schema -> unit =
     lnk := In_cache { c with status = Clean }
   | Small _
   | Serialized _
-  | Serialized_reused _
   | Serialized_small _
   | On_disk _
   | On_disk_small _
@@ -413,7 +408,6 @@ let rec fetch : type a. a link -> a =
       v)
   | In_memory v | In_memory_reused v -> v
   | Serialized _
-  | Serialized_reused _
   | Serialized_small _
   | Small _
   | On_disk_ptr _
@@ -471,7 +465,6 @@ let write ?(flags = []) fd ~filename ~id root_schema root_value =
         (fun (type a) (lnk : a link) _type_id (schema : a schema) : unit ->
           match !lnk with
           | Serialized _
-          | Serialized_reused _
           | Serialized_small _
           | Small _
           | On_disk_ptr _ -> ()
@@ -553,7 +546,7 @@ let write ?(flags = []) fd ~filename ~id root_schema root_value =
   and write_child_reused : type a. a link -> a schema -> a -> unit =
    fun lnk schema v ->
     let _v_size, v_smalls = write_children schema v in
-    lnk := Serialized_reused { loc = pos_out fd };
+    lnk := Serialized { loc = pos_out fd };
     output_and_mark (V v) v_smalls
   in
   let _, root_value_smalls = write_children root_schema root_value in

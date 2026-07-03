@@ -46,18 +46,14 @@ let union ~f store x y =
       let value = f value_x value_y in
       if rank_x < rank_y then
         let store =
-          let s = Uid_map.add x (Link y) store in
-          if value <> value_y then
-            Uid_map.add y (Root { value; rank = rank_y }) s
-          else s
+          Uid_map.add x (Link y) store
+          |> Uid_map.add y (Root { value; rank = rank_y })
         in
         (store, y)
       else if rank_x > rank_y then
         let store =
-          let s = Uid_map.add y (Link x) store in
-          if value <> value_x then
-            Uid_map.add x (Root { value; rank = rank_x }) s
-          else s
+          Uid_map.add y (Link x) store
+          |> Uid_map.add x (Root { value; rank = rank_x })
         in
         (store, x)
       else

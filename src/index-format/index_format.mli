@@ -10,7 +10,7 @@ module Lid : sig
 end
 module Lid_set : Granular_set.S with type elt = Lid.t
 module Stats : Map.S with type key = String.t
-module Uid_set = Shape.Uid.Set
+module Uid_set : Granular_set.S with type elt = Shape.Uid.t
 module Uid_map : Granular_map.S with type key = Shape.Uid.t
 module Union_find : sig
   type t

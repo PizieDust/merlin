@@ -68,7 +68,6 @@ let union ~f store x y =
     | Link _, Root _ | Root _, Link _ | Link _, Link _ -> assert false
 
 let merge ~f (s1 : 'a store) (s2 : 'a store) =
-  (* TODO there is similar logic in [index.ml] *)
   let ensure store uid =
     if Uid_map.mem uid store then store
     else

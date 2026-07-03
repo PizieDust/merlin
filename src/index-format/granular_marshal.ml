@@ -269,7 +269,9 @@ let rec disk_to_memory_iter store parent_link =
             upgrade_reused_link_schema lnk' store schema;
             Cache.replace store.cache loc (Link (lnk', Some type_id));
             lnk := Duplicate (normalize lnk')
-          | _ -> lnk := On_disk { store; loc; schema = Some schema })
+          | None ->
+            lnk := On_disk { store; loc; schema = Some schema };
+            Cache.add store.cache loc (Link (lnk, Some type_id)))
         | On_disk_ptr { filename; loc; id; pos = Some small_pos } ->
           let filename = resolve_filename store ~filename in
           let store = { filename; id; cache = Cache_cache.read filename } in

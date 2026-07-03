@@ -4,7 +4,7 @@ module Lid = Lid
 module Lid_set = Granular_set.Make (Lid)
 module Uid_map = Union_find.Uid_map
 module Stats = Map.Make (String)
-module Uid_set = Shape.Uid.Set
+module Uid_set = Granular_set.Make (Shape.Uid)
 
 module Union_find = struct
   type t = Uid_set.t Union_find.elt_handle Granular_marshal.link
@@ -65,6 +65,8 @@ type index =
   }
 
 let lidset_schema iter lidset = Lid_set.schema iter Lid.schema lidset
+let uidset_schema iter lidset =
+  Uid_set.schema iter Granular_marshal.schema_no_sublinks lidset
 
 let type_setmap : Lid_set.t Uid_map.t Type.Id.t = Type.Id.make ()
 let type_ufmap : Union_find.t Uid_map.t Type.Id.t = Type.Id.make ()
@@ -81,7 +83,9 @@ let index_schema (iter : Granular_marshal.iter) index =
     (fun iter _ v -> Union_find.schema iter v)
     index.related_uids;
   Uid_map.schema type_ufstore iter
-    (fun _iter _uid _content -> ())
+    (fun iter _uid -> function
+      | Link _ -> ()
+      | Root { value; _ } -> uidset_schema iter value)
     index.related_uids_store
 
 let compress index =
@@ -122,7 +126,7 @@ let pp_related_uids (related_uids_store : Union_find.store)
   let rec gather acc map =
     match Uid_map.choose_opt map with
     | Some (_key, union) ->
-      let group = Union_find.get related_uids_store union |> Uid_set.to_list in
+      let group = Union_find.get related_uids_store union |> Uid_set.elements in
       List.fold_left (fun acc key -> Uid_map.remove key acc) map group
       |> gather (group :: acc)
     | None -> acc

@@ -511,7 +511,7 @@ let write ?(flags = []) fd ~filename ~id root_schema root_value =
       List.filter
         (fun (Vlink (_v, lnk)) ->
           match !lnk with
-          | On_disk_ptr { pos = Some _; _ } ->
+          | On_disk_ptr { pos = Some _; _ } | Serialized_small _ ->
             (* This small has already been serialized by another owner *) false
           | _ -> true)
         small_children

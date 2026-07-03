@@ -20,10 +20,10 @@ module Union_find = struct
 
   let union store a b =
     let open Granular_marshal in
-    let store, root =
+    let store, _root =
       Union_find.union store ~f:Uid_set.union (fetch a) (fetch b)
     in
-    (store, link root)
+    (store, a)
 
   let merge = Union_find.merge ~f:Uid_set.union
 

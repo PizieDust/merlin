@@ -71,7 +71,7 @@ let speclist =
     ( "--cache-size",
       Arg.Set_int cache_size_kb,
       "Set LRU cache size in kb. Will bound memory usage in read-heavy \
-       scenarios." )
+       scenarios. Defaults to 1_000_000 (1gb)" )
   ]
 
 let set_log_level debug verbose =

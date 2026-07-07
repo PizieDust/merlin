@@ -471,7 +471,7 @@ let write ?(flags = []) fd ~filename ~id root_schema root_value =
           | In_memory_reused v -> write_child_reused lnk schema v
           | Duplicate original_lnk -> (
             match !original_lnk with
-            | Serialized_reused _ | Serialized_small _ | On_disk_ptr _ ->
+            | Serialized _ | Serialized_small _ | On_disk_ptr _ ->
               lnk := !original_lnk
             | In_memory_reused v ->
               write_child_reused original_lnk schema v;

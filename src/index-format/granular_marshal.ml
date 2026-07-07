@@ -54,9 +54,10 @@ and 'a repr =
           small's actual value in the array stored by its parent value. *)
   | Serialized_small of { loc : int; pos : int }
       (** {i on-disk} A pointer to an already serialized small value. *)
-  | On_disk_ptr of { filename : string; loc : int; id : int; pos : int option }
+  | On_disk_ptr of { filename : string; loc : int; id : int }
       (** {i on-disk} A pointer to a serialized value in another file. The
           optional `pos` field is used to target small values. *)
+  | On_disk_small_ptr of { filename : string; loc : int; id : int; pos : int }
   (*
    * In-memory realm
    *)
@@ -102,11 +103,9 @@ let string_of_link : type a. a link -> string =
     Printf.sprintf "On_disk_small(small_pos=%d)" small_pos
   | Serialized_small { loc; pos } ->
     Printf.sprintf "Serialized_small(loc=%d;small_pos=%d)" loc pos
-  | On_disk_ptr { loc; pos; _ } ->
-    Printf.sprintf "On_disk_ptr(loc=%d%s)" loc
-      (match pos with
-      | Some pos -> Printf.sprintf ", pos=%d" pos
-      | None -> "")
+  | On_disk_ptr { loc; _ } -> Printf.sprintf "On_disk_ptr(loc=%d)" loc
+  | On_disk_small_ptr { loc; pos; _ } ->
+    Printf.sprintf "On_disk_ptr(loc=%d, pos=%d)" loc pos
   | In_memory _ -> "In_memory"
   | In_cache { status; loc; _ } ->
     let clean_dirty =
@@ -234,11 +233,11 @@ let rec disk_to_memory_iter store parent_link =
               }
         | Serialized { loc } ->
           maybe_reuse_or_upgrade lnk store loc type_id schema
-        | On_disk_ptr { filename; loc; id; pos = None } ->
+        | On_disk_ptr { filename; loc; id } ->
           let filename = resolve_filename store ~filename in
           let store = { filename; id; cache = Cache_cache.read filename } in
           maybe_reuse_or_upgrade lnk store loc type_id schema
-        | On_disk_ptr { filename; loc; id; pos = Some small_pos } ->
+        | On_disk_small_ptr { filename; loc; id; pos = small_pos } ->
           let filename = resolve_filename store ~filename in
           let store = { filename; id; cache = Cache_cache.read filename } in
           let parent =
@@ -305,6 +304,7 @@ and upgrade_reused_link_schema : type a. a link -> store -> a schema -> unit =
   | On_disk _
   | On_disk_small _
   | On_disk_ptr _
+  | On_disk_small_ptr _
   | In_memory _
   | In_cache _
   | In_memory_reused _
@@ -411,6 +411,7 @@ let rec fetch : type a. a link -> a =
   | Serialized_small _
   | Small _
   | On_disk_ptr _
+  | On_disk_small_ptr _
   | On_disk { schema = None; _ } ->
     invalid_arg
       ("Granular_marshal.fetch: accesssing dirty link " ^ string_of_link lnk)
@@ -467,7 +468,8 @@ let write ?(flags = []) fd ~filename ~id root_schema root_value =
           | Serialized _
           | Serialized_small _
           | Small _
-          | On_disk_ptr _ -> ()
+          | On_disk_ptr _
+          | On_disk_small_ptr _ -> ()
           | In_memory_reused v -> write_child_reused lnk schema v
           | Duplicate original_lnk -> (
             match !original_lnk with
@@ -478,7 +480,7 @@ let write ?(flags = []) fd ~filename ~id root_schema root_value =
               lnk := !original_lnk
             | On_disk { store = { filename; id; _ }; loc; _ }
             | In_cache { loc; store = { filename; id; _ }; _ } ->
-              lnk := On_disk_ptr { filename; id; loc; pos = None }
+              lnk := On_disk_ptr { filename; id; loc }
             | _ ->
               failwith
                 (Format.sprintf
@@ -487,16 +489,16 @@ let write ?(flags = []) fd ~filename ~id root_schema root_value =
           | In_memory v -> write_child lnk schema v size ~small_children
           | In_cache { loc; store = { filename; id; _ }; _ } ->
             let filename = relativize filename in
-            lnk := On_disk_ptr { filename; id; loc; pos = None }
+            lnk := On_disk_ptr { filename; id; loc }
           | On_disk { store = { filename; id; _ }; loc; _ } ->
             (* TODO we could have all the possible filenames wrote once
                somewhere in the file. *)
             let filename = relativize filename in
-            lnk := On_disk_ptr { filename; id; loc; pos = None }
+            lnk := On_disk_ptr { filename; id; loc }
           | On_disk_small { parent; small_pos; _ } ->
             let { filename; id; _ }, loc = store_and_loc_of_parent parent in
             let filename = relativize filename in
-            lnk := On_disk_ptr { filename; id; loc; pos = Some small_pos })
+            lnk := On_disk_small_ptr { filename; id; loc; pos = small_pos })
     }
   and output_and_mark (V v) (small_children : any_val_link list) =
     let new_smalls =
@@ -504,7 +506,7 @@ let write ?(flags = []) fd ~filename ~id root_schema root_value =
       List.filter
         (fun (Vlink (_v, lnk)) ->
           match !lnk with
-          | On_disk_ptr { pos = Some _; _ } | Serialized_small _ ->
+          | On_disk_small_ptr _ | Serialized_small _ ->
             (* This small has already been serialized by another owner *) false
           | _ -> true)
         small_children

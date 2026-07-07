@@ -1,3 +1,11 @@
+unreleased
+==========
+
+  + merlin library
+    - Fix `locate` and `document` on `open` paths in `.mli` files: resolve the
+      open path in the environment before the open, so a self-shadowing
+      submodule no longer hides the opened module (fixes #1748)
+
 merlin 5.8
 ==========
 Tue Jun 23 12:15:42 CEST 2026

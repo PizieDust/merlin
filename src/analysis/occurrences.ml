@@ -243,7 +243,7 @@ let lookup_related_uids_in_indexes ~(config : Mconfig.t) uid =
   in
   Uid_map.find_opt uid related_uids
   |> Option.value_map ~default:[] ~f:(fun x ->
-      x |> Union_find.get store |> Uid_set.to_list)
+      x |> Union_find.get store |> Uid_set.elements)
 
 let find_linked_uids ~config ~scope ~name uid =
   let title = "find_linked_uids" in

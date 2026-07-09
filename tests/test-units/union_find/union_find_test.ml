@@ -64,13 +64,30 @@ let disjoint_merge () =
     "disjoint classes stay separate" false
     (Uid_set.mem c (Union_find.get merged a))
 
+(* Both stores have A as a lone root but carry different related sets. The old
+   [merge] kept only s1's value and dropped s2's; the merged value must be the
+   union of both. *)
+let conflicting_root_values () =
+  let s1 =
+    fst (Union_find.new_root (Union_find.empty ()) a (Uid_set.of_list [ a; b ]))
+  in
+  let s2 =
+    fst (Union_find.new_root (Union_find.empty ()) a (Uid_set.of_list [ a; c ]))
+  in
+  let merged = Union_find.merge ~f s1 s2 in
+  Alcotest.check uid_set "merged root value is the union of both"
+    (Uid_set.of_list [ a; b; c ])
+    (Union_find.get merged a)
+
 let cases =
   ( "union_find_merge",
     Alcotest.
       [ test_case "merges transitive classes across stores" `Quick
           transitive_merge;
         test_case "self-merge preserves classes" `Quick self_merge;
-        test_case "disjoint stores keep separate classes" `Quick disjoint_merge
+        test_case "disjoint stores keep separate classes" `Quick disjoint_merge;
+        test_case "shared root combines conflicting values" `Quick
+          conflicting_root_values
       ] )
 
 let () = Alcotest.run "merlin-lib.index_format.union_find" [ cases ]

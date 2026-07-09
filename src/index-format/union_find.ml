@@ -67,13 +67,11 @@ let union ~f store x y =
 let merge ~f (s1 : 'a store) (s2 : 'a store) =
   let ensure store uid =
     let value = get s2 uid in
-    if not (Uid_map.mem uid store) then fst (new_root store uid value)
-    else
-      let store, root, content = find_and_compress store uid in
-      match content with
-      | Root { value = v0; rank } ->
-        Uid_map.add root (Root { value = f v0 value; rank }) store
-      | Link _ -> assert false
+    match find_and_compress store uid with
+    | exception Not_found -> fst (new_root store uid value)
+    | store, root, Root { value = v0; rank } ->
+      Uid_map.add root (Root { value = f v0 value; rank }) store
+    | _, _, Link _ -> assert false
   in
   Uid_map.fold
     (fun uid content store ->

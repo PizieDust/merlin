@@ -17,12 +17,6 @@ and any_val_link = Vlink : 'a * 'a link -> any_val_link
 
 and cached = Cached : 'a link -> cached
 
-and value_status =
-  | Dirty_unknown_schema
-      (** Marks a value that has not been cleaned yet. Usually because its
-          schema was unknown when it was read from the disk for its smalls. *)
-  | Clean
-
 and 'a link = 'a repr ref
 
 (** Links descriptions.
@@ -77,10 +71,9 @@ and 'a repr =
           multiple times. *)
   | In_cache of
       { value : 'a;
-        status : value_status;
         store : store;
         loc : int;
-        schema : 'a schema option ref;
+        mutable schema : 'a schema option;
         cell : cached Dbllist.cell;
         small_values : any_value array
       }
@@ -107,11 +100,11 @@ let string_of_link : type a. a link -> string =
   | On_disk_small_ptr { loc; pos; _ } ->
     Printf.sprintf "On_disk_ptr(loc=%d, pos=%d)" loc pos
   | In_memory _ -> "In_memory"
-  | In_cache { status; loc; _ } ->
+  | In_cache { schema; loc; _ } ->
     let clean_dirty =
-      match status with
-      | Clean -> "Clean"
-      | Dirty_unknown_schema -> "Dirty"
+      match schema with
+      | Some _ -> "Clean"
+      | None -> "Dirty"
     in
     Printf.sprintf "In_cache(%s; loc=%i)" clean_dirty loc
   | In_memory_reused _ -> "In_memory_reused"
@@ -294,10 +287,10 @@ and upgrade_reused_link_schema : type a. a link -> store -> a schema -> unit =
                     [On_disc_ptr { pos = Some_; _}] with a parent of unknown
                     schema. *)
     lnk := On_disk { store; loc; schema = Some schema }
-  | In_cache ({ value; status = Dirty_unknown_schema; _ } as c) ->
+  | In_cache ({ value; schema = None; _ } as c) ->
     (* If we already have the value in cache we must clean it. *)
     schema (disk_to_memory_iter store (PLink lnk)) value;
-    lnk := In_cache { c with status = Clean }
+    c.schema <- Some schema
   | Small _
   | Serialized _
   | Serialized_small _
@@ -312,19 +305,16 @@ and upgrade_reused_link_schema : type a. a link -> store -> a schema -> unit =
 
 let add_to_cache value lnk ~loc store ~size small_values schema =
   let discarded = Dbllist.discard_size (get_lru ()) size in
-  let status = if Option.is_none schema then Dirty_unknown_schema else Clean in
   let cell = Dbllist.add_front (get_lru ()) (Cached lnk, size) in
   List.iter
     (fun (Cached link) ->
       (* This also free the smalls that are stored in the link *)
       match !link with
       | In_cache { loc; store; schema; _ } ->
-        link := On_disk { store; loc; schema = !schema }
+        link := On_disk { store; loc; schema }
       | _ -> assert false)
     discarded;
-  lnk :=
-    In_cache
-      { value; status; loc; store; schema = ref schema; cell; small_values }
+  lnk := In_cache { value; loc; store; schema; cell; small_values }
 
 (** Read one value and its smalls from the disk.  *)
 let read_loc_dirty fd loc =
@@ -386,10 +376,10 @@ let fetch_parent_smalls : parent_link -> any_value array * store =
 let rec fetch : type a. a link -> a =
  fun lnk ->
   match !lnk with
-  | In_cache { value; status = Clean; cell; _ } ->
+  | In_cache { value; schema = Some _; cell; _ } ->
     Dbllist.promote (get_lru ()) cell;
     value
-  | In_cache { status = Dirty_unknown_schema; _ } ->
+  | In_cache { schema = None; _ } ->
     invalid_arg "Granular_marshal.fetch: accessing dirty cached value"
   | Duplicate original_lnk -> fetch original_lnk
   | On_disk { store; loc; schema = Some schema } ->

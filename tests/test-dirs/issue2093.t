@@ -1,7 +1,7 @@
   $ cat >test.mli <<EOF
   > val last_2 : 'a list -> ('a * 'a) option
   > EOF
-
+FIXME: the current results promoted is wrong. 
   $ $MERLIN single type-enclosing -filename test.mli -position 1:28 -verbosity 0 -index 0 < test.mli
   {
     "class": "return",

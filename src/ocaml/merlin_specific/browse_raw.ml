@@ -619,7 +619,8 @@ let of_node = function
         | None -> app (Signature_item (item, sig_final_env))
         | Some item' -> app (Signature_item (item, item'.sig_env)))
       sig_items
-  | Signature_item ({ sig_desc; sig_env}, _) -> of_signature_item_desc sig_env sig_desc
+  | Signature_item ({ sig_desc; sig_env }, _) ->
+    of_signature_item_desc sig_env sig_desc
   | Module_declaration md ->
     of_module_type md.md_type ** app (Module_declaration_name md)
   | Module_type_declaration mtd ->
